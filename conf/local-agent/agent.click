@@ -17,6 +17,7 @@ agent_socket::Socket(UDP, 0.0.0.0, 6777)
 // send packets to master server
 sdn_agent[0] -> master_socket::Socket(UDP, 192.168.2.3, 26284);
 
+// OUTBOUND = true means capture packets from two directions
 FromDevice(wlan1, OUTBOUND true)
     -> Classifier(12/0800)
     -> CheckIPHeader(14, CHECKSUM true)
@@ -50,3 +51,34 @@ ip_class[2]
 
 server_offer[0]
     -> q;
+
+// sniffer 802.11 packet
+FromDevice(mon.wlan1)
+// -> prism2_decap :: Prism2Decap()
+// -> extra_decap :: ExtraDecap()
+// -> AthdescDecap()
+-> RadiotapDecap()
+-> extra_decap :: ExtraDecap()
+-> phyerr_filter :: FilterPhyErr()
+-> tx_filter :: FilterTX()
+-> dupe :: WifiDupeFilter() 
+-> wifi_cl :: Classifier(0/08%0c 1/01%03, //data
+                         0/00%0c); //mgt
+
+wifi_cl [0] -> Discard;
+
+wifi_cl [1]
+// -> PrintWifi
+-> mgt_cl :: Classifier(0/a0%f0, // disassoc
+                        0/c0%f0, // deauth
+                        -);
+
+mgt_cl[0] 
+-> Print(Disassoc) 
+-> [3]sdn_agent;
+
+mgt_cl[1] 
+-> Print(Deauth) 
+-> [3]sdn_agent;
+
+mgt_cl[2] -> Discard;

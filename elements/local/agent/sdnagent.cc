@@ -27,6 +27,7 @@
 #include <clicknet/ether.h>
 #include <clicknet/ip.h>
 #include <clicknet/udp.h>
+#include <clicknet/wifi.h>
 
 #include "dhcp/dhcp_common.hh"
 #include "dhcp/dhcpoptionutil.hh"
@@ -57,6 +58,12 @@ SdnAgent::run_timer(Timer*)
     StringAccum _sa;
     String _payload;
     String r1, r2;
+
+    // clear old agent rates if there is no client
+    if (_client_table.empty()) {
+        _byte_up_rate.update(0);
+        _byte_down_rate.update(0);
+    }
 
     // send messages to master controller
     r1 = _byte_up_rate.unparse_rate();
@@ -144,6 +151,11 @@ SdnAgent::push(int port, Packet *p)
     } else if (port == 2) { // other packets
         // _byte_rate.update(p->length()); // overall rate
 
+
+        // here is a bug
+        // if no packet in, the _byte_rate will be the same, and 
+        // never be updated
+
         click_ether *eh = (click_ether *) p->data();
         EtherAddress eth_src = EtherAddress((unsigned char *)eh->ether_shost);
         EtherAddress eth_dst = EtherAddress((unsigned char *)eh->ether_dhost);
@@ -159,10 +171,36 @@ SdnAgent::push(int port, Packet *p)
         }
 
         output(2).push(p);
+    } else if (port == 3) { // wifi disconnection
+        if (p->length() < sizeof(struct click_wifi)) {
+            click_chatter("%p{element}: packet too small: %d vs %d\n",
+                this,
+                p->length(),
+                sizeof(struct click_wifi));
+        } else {
+            // uint8_t dir;
+            uint8_t type;
+            uint8_t subtype;
+
+            struct click_wifi *w = (struct click_wifi *) p->data();
+
+            // dir = w->i_fc[1] & WIFI_FC1_DIR_MASK;
+            type = w->i_fc[0] & WIFI_FC0_TYPE_MASK;
+            subtype = w->i_fc[0] & WIFI_FC0_SUBTYPE_MASK;
+
+            if (type != WIFI_FC0_TYPE_MGT) {
+                click_chatter("%p{element}: received non-management packet\n", this);
+                return;
+            }
+
+            if (subtype == WIFI_FC0_SUBTYPE_DEAUTH 
+                || subtype == WIFI_FC0_SUBTYPE_DISASSOC) {
+                disconnect_responder(w);
+            }
+        }
     }
 
     p->kill();
-
     return;
 }
 
@@ -372,6 +410,38 @@ SdnAgent::make_nak_packet(Packet *p, Lease *)
     
     return nak_q;
 }
+
+void 
+SdnAgent::disconnect_responder(struct click_wifi *w)
+{
+    uint32_t headroom =  Packet::default_headroom;
+    Packet *_packet;
+    StringAccum _sa;
+    String _payload;
+
+    EtherAddress dst = EtherAddress(w->i_addr1);
+    EtherAddress src = EtherAddress(w->i_addr2);
+
+    if (dst != _mac) {
+        click_chatter("%p{element}: disconnecting packet with weird addr\n", this);
+        return;
+    }
+
+    if (_client_table.find(src) != _client_table.end()) {
+        
+        // generate the inform packet for master server
+        _sa << "clientdisconnect " << src.unparse_colon().c_str() << "\n";
+        _payload = _sa.take_string();
+        _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
+        // send inform packet to master
+        output(0).push(_packet);
+
+        // remove the corresponding client
+        _client_table.erase(src);
+    }
+
+}
+
 
 
 
