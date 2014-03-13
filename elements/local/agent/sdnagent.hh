@@ -29,6 +29,8 @@
 
 #include "dhcp/leasetable.hh"
 
+#define UDP_CLIENT_PORT 7755
+#define UDP_AGENT_PORT 7766
 
 CLICK_DECLS
 
@@ -90,6 +92,10 @@ class SdnAgent : public Element {
     Packet *make_ack_packet(Packet *p, Lease *lease);
     Packet *make_nak_packet(Packet *p, Lease *lease);
     DHCPLeaseTable *_leases;  // dhcp lease pool
+
+    // communicate with client
+    void push_udp_to_client(Packet *p_in, IPAddress ip_dst, 
+                            EtherAddress eth_dst, int port);
 
     // client disconnect
     void disconnect_responder(struct click_wifi *w);

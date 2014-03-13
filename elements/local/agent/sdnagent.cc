@@ -28,9 +28,12 @@
 #include <clicknet/ip.h>
 #include <clicknet/udp.h>
 #include <clicknet/wifi.h>
+#include <click/atomic.hh>
 
 #include "dhcp/dhcp_common.hh"
 #include "dhcp/dhcpoptionutil.hh"
+
+#define MESSAGE_END '\n'
 
 CLICK_DECLS
 
@@ -130,27 +133,62 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
 * This element has 3 input ports and 3 output ports.
 *
 * In-port-0: ip encapsulated packets from master controller
-* In-port-1: dhcp packets (not added by far)
+* In-port-1: dhcp packets
 * In-port-2: any other ethernet encapsulated frame
 *
 * Out-port-0: management packets to master controller via a socket
-* Out-port-1: dhcp manages (no added by far)
+* Out-port-1: packets to clients
 * Out-port-2: other packets, let them through
 */
 
 void
 SdnAgent::push(int port, Packet *p)
 {
-    StringAccum _sa;
 
     if (port == 0) {
-        _sa << "Received Messages from Controller!";
-        click_chatter("%s", _sa.c_str());
+        uint8_t *data = (uint8_t *) (p->data());
+        uint8_t d[6], *ptr;
+        int i, len;
+
+        if (*data == 'c') {
+            data++;
+            for (i = 0; i < 6; i++) {
+                d[i] = *data++;
+                // click_chatter("%02x", d[i]);
+            }
+            EtherAddress mac_dst = EtherAddress(d);
+
+            if (_client_table.find(mac_dst) != _client_table.end()) {
+                Client *c = _client_table.get_pointer(mac_dst);
+                IPAddress ip_dst = c->_ipaddr;
+                click_chatter("%p{element}: server message to client %s", 
+                                this, ip_dst.unparse().c_str());
+
+                len = 0;
+                for (ptr = data; *ptr != '\n' && *ptr != '\0'; ptr++) {
+                    len++;
+                }
+                // click_chatter("%d", len);
+
+                Packet *p_to_client = Packet::make(data, len);
+                push_udp_to_client(p_to_client, ip_dst, mac_dst, 1);
+
+            } else {
+                click_chatter("%p{element}: can not find corresponding client, "
+                                "ignore the message!", this);
+            }
+                
+        } else if (*data == 'a') {
+            click_chatter("%c", 'a');
+        }
+        
+
+        
+
     } else if (port == 1) {
         send_dhcp_ack_or_nak(1, p);
     } else if (port == 2) { // other packets
         // _byte_rate.update(p->length()); // overall rate
-
 
         // here is a bug
         // if no packet in, the _byte_rate will be the same, and 
@@ -442,6 +480,49 @@ SdnAgent::disconnect_responder(struct click_wifi *w)
 
 }
 
+void
+SdnAgent::push_udp_to_client(Packet *p_in, IPAddress ip_dst, 
+                            EtherAddress eth_dst, int port)
+{
+    WritablePacket *p = p_in->push(sizeof(click_udp) + sizeof(click_ip));
+    click_ip *ip = reinterpret_cast<click_ip *>(p->data());
+    click_udp *udp = reinterpret_cast<click_udp *>(ip + 1);
+
+    // set up IP header
+    ip->ip_v = 4;
+    ip->ip_hl = sizeof(click_ip) >> 2;
+    ip->ip_len = htons(p->length());
+    static atomic_uint32_t id;
+    ip->ip_id = htons(id.fetch_and_add(1));
+    ip->ip_p = IP_PROTO_UDP;
+    ip->ip_src = _ipaddr;
+    ip->ip_dst = ip_dst;
+    ip->ip_tos = 0;
+    ip->ip_off = 0;
+    ip->ip_ttl = 250;
+
+    ip->ip_sum = 0;
+    ip->ip_sum = click_in_cksum((unsigned char *)ip, sizeof(click_ip));
+    p->set_dst_ip_anno(ip_dst);
+    p->set_ip_header(ip, sizeof(click_ip));
+
+    // set up UDP header
+    udp->uh_sport = htons(UDP_AGENT_PORT);
+    udp->uh_dport = htons(UDP_CLIENT_PORT);
+    uint16_t len = p->length() - sizeof(click_ip);
+    udp->uh_ulen = htons(len);
+    udp->uh_sum = 0;
+    unsigned csum = click_in_cksum((unsigned char *)udp, len);
+    udp->uh_sum = click_in_cksum_pseudohdr(csum, ip, len);
+
+    // set ethernet header
+    WritablePacket *s = p->push_mac_header(14);
+    click_ether *eth = (click_ether *)s->data();
+    memcpy(eth->ether_shost, _mac.data(), 6);
+    memcpy(eth->ether_dhost, eth_dst.data(), 6);
+    eth->ether_type = htons(ETHERTYPE_IP);
+    output(port).push(s);
+}
 
 
 

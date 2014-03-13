@@ -17,6 +17,11 @@ agent_socket::Socket(UDP, 0.0.0.0, 6777)
 // send packets to master server
 sdn_agent[0] -> master_socket::Socket(UDP, 192.168.2.3, 26284);
 
+// send packets from agent to client
+sdn_agent[1]
+    -> q::Queue(1000)
+    -> to_dev::ToDevice(wlan1);
+
 // OUTBOUND = true means capture packets from two directions
 FromDevice(wlan1, OUTBOUND true)
     -> Classifier(12/0800)
@@ -36,9 +41,10 @@ dhcp_class[0] -> Print(DISCOVER)
 	-> [0]server_offer;
 
 dhcp_class[1] -> Print(REQUEST)
-    -> [1]sdn_agent[1]
-    -> q::Queue(1000)
-    -> to_dev::ToDevice(wlan1);
+    ->[1]sdn_agent;
+    // -> [1]sdn_agent[1]
+    // -> q::Queue(1000)
+    // -> to_dev::ToDevice(wlan1);
 
 dhcp_class[2] -> Print(RELEASE) 
 	-> DHCPServerRelease(leases);
