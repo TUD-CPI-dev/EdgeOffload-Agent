@@ -68,16 +68,17 @@ SdnAgent::run_timer(Timer*)
         _byte_down_rate.update(0);
     }
 
-    // send messages to master controller
+    // send agent rate messages to master controller
     r1 = _byte_up_rate.unparse_rate();
     r2 = _byte_down_rate.unparse_rate();
     if (r1 != "" && r2 != "") {
-        _sa << "agentrate " << r1 << " " << r2 << " \n";
+        _sa << "agentrate|" << r1 << "|" << r2 << "|\n";
         _payload = _sa.take_string();
         _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
         output(0).push(_packet);
     }
 
+    // // send client rate to master
     for (HashTable<EtherAddress, Client>::iterator it = _client_table.begin(); 
         it.live(); it++) {
         
@@ -85,9 +86,9 @@ SdnAgent::run_timer(Timer*)
         r1 = it.value()._byte_up_rate.unparse_rate();
         r2 = it.value()._byte_down_rate.unparse_rate();
         if (r1 != "" && r2 != "") {
-            _sa << "clientrate " << it.value()._mac.unparse_colon().c_str() <<
-                " " << it.value()._ipaddr.unparse().c_str() << " " << r1 << 
-                " " << r2 << " \n";
+            _sa << "clientrate|" << it.value()._mac.unparse_colon().c_str() <<
+                "|" << it.value()._ipaddr.unparse().c_str() << "|" << r1 << 
+                "|" << r2 << "|\n";
             _payload = _sa.take_string();
             _packet = Packet::make(headroom, _payload.data(), 
                                     _payload.length(), 0);
@@ -133,8 +134,10 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
 * This element has 3 input ports and 3 output ports.
 *
 * In-port-0: ip encapsulated packets from master controller
-* In-port-1: dhcp packets
-* In-port-2: any other ethernet encapsulated frame
+* In-port-1: wifi disassociate/deauth packets
+* In-port-2: dhcp packets
+* In-port-3: packets sent from client to agent's specific control port
+* In-port-4: other ethernet encapsulated frame to/from client
 *
 * Out-port-0: management packets to master controller via a socket
 * Out-port-1: packets to clients
@@ -179,37 +182,11 @@ SdnAgent::push(int port, Packet *p)
             }
                 
         } else if (*data == 'a') {
-            click_chatter("%c", 'a');
+            click_chatter("%c", 'master to agent');
         }
         
 
-        
-
-    } else if (port == 1) {
-        send_dhcp_ack_or_nak(1, p);
-    } else if (port == 2) { // other packets
-        // _byte_rate.update(p->length()); // overall rate
-
-        // here is a bug
-        // if no packet in, the _byte_rate will be the same, and 
-        // never be updated
-
-        click_ether *eh = (click_ether *) p->data();
-        EtherAddress eth_src = EtherAddress((unsigned char *)eh->ether_shost);
-        EtherAddress eth_dst = EtherAddress((unsigned char *)eh->ether_dhost);
-
-        if (_client_table.find(eth_src) != _client_table.end()) {
-            Client *c = _client_table.get_pointer(eth_src);
-            c->_byte_up_rate.update(p->length());
-            _byte_up_rate.update(p->length());
-        } else if (_client_table.find(eth_dst) != _client_table.end()) {
-            Client *c = _client_table.get_pointer(eth_dst);
-            c->_byte_down_rate.update(p->length());
-            _byte_down_rate.update(p->length());
-        }
-
-        output(2).push(p);
-    } else if (port == 3) { // wifi disconnection
+    } else if (port == 1) { // wifi disconnection
         if (p->length() < sizeof(struct click_wifi)) {
             click_chatter("%p{element}: packet too small: %d vs %d\n",
                 this,
@@ -235,7 +212,48 @@ SdnAgent::push(int port, Packet *p)
                 || subtype == WIFI_FC0_SUBTYPE_DISASSOC) {
                 disconnect_responder(w);
             }
+        }  
+
+    } else if (port == 2) {
+
+        send_dhcp_ack_or_nak(1, p);
+
+    } else if (port == 3) { // packets from client to agent control port
+        uint32_t header_len = sizeof(click_ether) + sizeof(click_udp) 
+                                + sizeof(click_ip);
+        uint8_t *data = (uint8_t *) (p->data() + header_len);
+        uint32_t len = p->length() - header_len;
+        
+        // if occasionally another packet data starts with "s|", there will be
+        // a packet miss-judgement
+        if (*data++ == 's' && *data++ == '|') {
+            click_chatter("%c", *data);
+            Packet *_packet = Packet::make(Packet::default_headroom, data, len-2, 0);
+            click_chatter("%p{element}: client message to master", this);
+            output(0).push(_packet);
+        }       
+    } else if (port == 4) { // statisitcs
+        // _byte_rate.update(p->length()); // overall rate
+
+        // here is a bug
+        // if no packet in, the _byte_rate will be the same, and 
+        // never be updated
+
+        click_ether *eh = (click_ether *) p->data();
+        EtherAddress eth_src = EtherAddress((unsigned char *)eh->ether_shost);
+        EtherAddress eth_dst = EtherAddress((unsigned char *)eh->ether_dhost);
+
+        if (_client_table.find(eth_src) != _client_table.end()) {
+            Client *c = _client_table.get_pointer(eth_src);
+            c->_byte_up_rate.update(p->length());
+            _byte_up_rate.update(p->length());
+        } else if (_client_table.find(eth_dst) != _client_table.end()) {
+            Client *c = _client_table.get_pointer(eth_dst);
+            c->_byte_down_rate.update(p->length());
+            _byte_down_rate.update(p->length());
         }
+
+        output(2).push(p); 
     }
 
     p->kill();
@@ -395,7 +413,7 @@ SdnAgent::make_ack_packet(Packet *p, Lease *lease)
     EtherAddress eth_src = EtherAddress((unsigned char *)req_msg->chaddr);
     IPAddress ip_src = IPAddress(lease->_ip);
     if (_client_table.find(eth_src) == _client_table.end()) {
-        _data << "client " << eth_src.unparse_colon().c_str() << " " << 
+        _data << "client|" << eth_src.unparse_colon().c_str() << "|" << 
             ip_src.unparse().c_str() << "\n";
         _payload = _data.take_string();
         _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);

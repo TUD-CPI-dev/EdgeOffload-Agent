@@ -57,7 +57,7 @@ class SdnAgent : public Element {
 
     // From Click
     const char *class_name() const  { return "SdnAgent"; }
-    const char *port_count() const  { return "4/3"; }
+    const char *port_count() const  { return "5/3"; }
     const char *processing() const  { return PUSH; }
     
     int initialize(ErrorHandler *); // initialize element

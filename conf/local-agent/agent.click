@@ -22,42 +22,6 @@ sdn_agent[1]
     -> q::Queue(1000)
     -> to_dev::ToDevice(wlan1);
 
-// OUTBOUND = true means capture packets from two directions
-FromDevice(wlan1, OUTBOUND true)
-    -> Classifier(12/0800)
-    -> CheckIPHeader(14, CHECKSUM true)
-    -> ip_class :: IPClassifier(icmp type echo-reply, dst udp port 67, -)
-
-ip_class[0] 
-	-> Print("ICMP ECHO REPLY") 
-	-> [1]server_offer::DHCPServerOffer(leases);
-
-// dhcp packets
-ip_class[1]
-	-> CheckDHCPMsg
-    -> dhcp_class :: DHCPClassifier( discover, request, release, -);
-
-dhcp_class[0] -> Print(DISCOVER) 
-	-> [0]server_offer;
-
-dhcp_class[1] -> Print(REQUEST)
-    ->[1]sdn_agent;
-    // -> [1]sdn_agent[1]
-    // -> q::Queue(1000)
-    // -> to_dev::ToDevice(wlan1);
-
-dhcp_class[2] -> Print(RELEASE) 
-	-> DHCPServerRelease(leases);
-	 
-dhcp_class[3] -> Print(OTHER) -> Discard;
-
-ip_class[2]
-    -> [2]sdn_agent[2]
-    -> Discard;
-
-server_offer[0]
-    -> q;
-
 // sniffer 802.11 packet
 FromDevice(mon.wlan1)
 // -> prism2_decap :: Prism2Decap()
@@ -81,10 +45,52 @@ wifi_cl [1]
 
 mgt_cl[0] 
 -> Print(Disassoc) 
--> [3]sdn_agent;
+-> [1]sdn_agent;
 
 mgt_cl[1] 
 -> Print(Deauth) 
--> [3]sdn_agent;
+-> [1]sdn_agent;
 
 mgt_cl[2] -> Discard;
+
+// OUTBOUND = true means capture packets from two directions
+FromDevice(wlan1, OUTBOUND true)
+    -> Classifier(12/0800)
+    -> CheckIPHeader(14, CHECKSUM true)
+    -> ip_class :: IPClassifier(icmp type echo-reply, dst udp port 67, dst udp port 6777, -)
+
+ip_class[0] 
+	-> Print("ICMP ECHO REPLY") 
+	-> [1]server_offer::DHCPServerOffer(leases);
+
+// dhcp packets
+ip_class[1]
+	-> CheckDHCPMsg
+    -> dhcp_class :: DHCPClassifier( discover, request, release, -);
+
+dhcp_class[0] -> Print(DISCOVER) 
+	-> [0]server_offer;
+
+dhcp_class[1] -> Print(REQUEST)
+    ->[2]sdn_agent;
+    // -> [2]sdn_agent[1]
+    // -> q::Queue(1000)
+    // -> to_dev::ToDevice(wlan1);
+
+dhcp_class[2] -> Print(RELEASE) 
+	-> DHCPServerRelease(leases);
+	 
+dhcp_class[3] -> Print(OTHER) -> Discard;
+
+ip_class[2]
+    -> Print
+    -> [3]sdn_agent;
+
+ip_class[3]
+    -> [4]sdn_agent[2]
+    -> Discard;
+
+server_offer[0]
+    -> q;
+
+
