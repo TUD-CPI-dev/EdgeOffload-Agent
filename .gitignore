@@ -1,6 +1,7 @@
 +*
 .dotest
 .*.cmd
+configure
 Makefile
 autom4te*
 bin
