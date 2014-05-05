@@ -211,9 +211,22 @@ SdnAgent::push(int port, Packet *p)
             }
                 
         } else if (*data == 'a') {
-            click_chatter("control packets from master to client");
+            data++;
+            for (i = 0; i < 6; i++) {
+                d[i] = *data++;
+                // click_chatter("%02x", d[i]);
+            }
+            EtherAddress mac = EtherAddress(d);
+
+            ptr = data;
+            String type = String(ptr, 6);
+            if (type.equals("remove")) {
+                click_chatter("master cmd: remove client %s", mac.unparse_colon().c_str());
+                if (_client_table.find(mac) != _client_table.end()) {
+                    _client_table.erase(mac);
+                }
+            }
         }
-        
 
     } else if (port == 1) { // wifi disconnection
         if (p->length() < sizeof(struct click_wifi)) {
@@ -262,9 +275,6 @@ SdnAgent::push(int port, Packet *p)
             output(0).push(_packet);
         }
     } else if (port == 4) { // icmp
-
-        click_chatter("receive icmp echo reply");
-
         const click_ether *eth = p->ether_header();
         const click_ip *ip_header = p->ip_header();
         const click_icmp_echo *icmp_header = reinterpret_cast<const click_icmp_echo *>(p->icmp_header());
@@ -641,6 +651,7 @@ SdnAgent::make_ping_request(IPAddress ip_dst, EtherAddress eth_dst)
     
     return p;
 }
+
 
 
 CLICK_ENDDECLS
