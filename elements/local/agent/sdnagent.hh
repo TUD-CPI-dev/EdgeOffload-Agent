@@ -57,7 +57,7 @@ class SdnAgent : public Element {
 
     // From Click
     const char *class_name() const  { return "SdnAgent"; }
-    const char *port_count() const  { return "5/3"; }
+    const char *port_count() const  { return "6/3"; }
     const char *processing() const  { return PUSH; }
     
     int initialize(ErrorHandler *); // initialize element
@@ -70,6 +70,8 @@ class SdnAgent : public Element {
       public:
         EtherAddress _mac;  // mac address
         IPAddress _ipaddr;  // ipv4 address
+        
+        int _ping_lost_num;
     
         // rate
         byte_rate_t _byte_up_rate;   // client rate
@@ -81,9 +83,12 @@ class SdnAgent : public Element {
 
   private:  
     EtherAddress _mac;  // mac address
-    IPAddress _ipaddr;  // ipv4 address
+    IPAddress _ipaddr;  // ipv4 control iface address
+    IPAddress _ap_ipaddr;    // hostapd iface address
     Timer _timer;
     int _interval;
+    uint32_t _count;         // ping keep alive packet count
+    uint16_t _icmp_sequence;
     byte_rate_t _byte_up_rate;   // agent overall rate
     byte_rate_t _byte_down_rate;
 
@@ -99,7 +104,10 @@ class SdnAgent : public Element {
 
     // client disconnect
     void disconnect_responder(struct click_wifi *w);
-
+    
+    // client keep alive ping test
+    Packet *make_ping_request(IPAddress ip_dst, EtherAddress eth_dst);
+    
     // client info
     HashTable<EtherAddress, Client> _client_table;
 };

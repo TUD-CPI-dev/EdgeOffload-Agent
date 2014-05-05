@@ -7,7 +7,8 @@ leases :: LeasePool( ETH 9c:d3:6d:10:a9:b8, IP 192.168.0.1,
                     START 192.168.0.100, END 192.168.0.254 );
 
 // local offload agent
-sdn_agent::SdnAgent(MAC 9c:d3:6d:10:a9:b8, IP 192.168.2.1, INTERVAL 10, 
+sdn_agent::SdnAgent(MAC 9c:d3:6d:10:a9:b8, CTRL_IP 192.168.2.1, 
+                    AP_IP 192.168.0.1, INTERVAL 5, 
                     LEASES leases);
 
 // receive messages from master server on port 6777
@@ -27,29 +28,29 @@ FromDevice(mon.wlan1)
 // -> prism2_decap :: Prism2Decap()
 // -> extra_decap :: ExtraDecap()
 // -> AthdescDecap()
--> RadiotapDecap()
--> extra_decap :: ExtraDecap()
--> phyerr_filter :: FilterPhyErr()
--> tx_filter :: FilterTX()
--> dupe :: WifiDupeFilter() 
--> wifi_cl :: Classifier(0/08%0c 1/01%03, //data
+    -> RadiotapDecap()
+    -> extra_decap :: ExtraDecap()
+    -> phyerr_filter :: FilterPhyErr()
+    -> tx_filter :: FilterTX()
+    -> dupe :: WifiDupeFilter() 
+    -> wifi_cl :: Classifier(0/08%0c 1/01%03, //data
                          0/00%0c); //mgt
 
 wifi_cl [0] -> Discard;
 
 wifi_cl [1]
-// -> PrintWifi
--> mgt_cl :: Classifier(0/a0%f0, // disassoc
+    // -> PrintWifi
+    -> mgt_cl :: Classifier(0/a0%f0, // disassoc
                         0/c0%f0, // deauth
                         -);
 
 mgt_cl[0] 
--> Print(Disassoc) 
--> [1]sdn_agent;
+    -> Print(Disassoc) 
+    -> [1]sdn_agent;
 
 mgt_cl[1] 
--> Print(Deauth) 
--> [1]sdn_agent;
+    -> Print(Deauth) 
+    -> [1]sdn_agent;
 
 mgt_cl[2] -> Discard;
 
@@ -59,9 +60,9 @@ FromDevice(wlan1, OUTBOUND true)
     -> CheckIPHeader(14, CHECKSUM true)
     -> ip_class :: IPClassifier(icmp type echo-reply, dst udp port 67, dst udp port 6777, -)
 
-ip_class[0] 
-	-> Print("ICMP ECHO REPLY") 
-	-> [1]server_offer::DHCPServerOffer(leases);
+ip_class[0]
+    -> [4]sdn_agent; 
+    // -> [1]server_offer::DHCPServerOffer(leases);
 
 // dhcp packets
 ip_class[1]
@@ -69,7 +70,7 @@ ip_class[1]
     -> dhcp_class :: DHCPClassifier( discover, request, release, -);
 
 dhcp_class[0] -> Print(DISCOVER) 
-	-> [0]server_offer;
+	-> [0]server_offer::DHCPServerOffer(leases);
 
 dhcp_class[1] -> Print(REQUEST)
     ->[2]sdn_agent;
@@ -87,7 +88,7 @@ ip_class[2]
     -> [3]sdn_agent;
 
 ip_class[3]
-    -> [4]sdn_agent[2]
+    -> [5]sdn_agent[2]
     -> Discard;
 
 server_offer[0]

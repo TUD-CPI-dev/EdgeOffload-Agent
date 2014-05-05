@@ -27,6 +27,7 @@
 #include <clicknet/ether.h>
 #include <clicknet/ip.h>
 #include <clicknet/udp.h>
+#include <clicknet/icmp.h>
 #include <clicknet/wifi.h>
 #include <click/atomic.hh>
 
@@ -34,6 +35,7 @@
 #include "dhcp/dhcpoptionutil.hh"
 
 #define MESSAGE_END '\n'
+#define ICMP_ID 1
 
 CLICK_DECLS
 
@@ -48,8 +50,9 @@ SdnAgent::~SdnAgent()
 int
 SdnAgent::initialize(ErrorHandler*)
 {
+    _count = 0;
     _timer.initialize(this);
-    _timer.schedule_now();
+    _timer.schedule_after_sec(10);
     return 0;
 }
 
@@ -78,10 +81,32 @@ SdnAgent::run_timer(Timer*)
         output(0).push(_packet);
     }
 
-    // // send client rate to master
+    // logic for client
     for (HashTable<EtherAddress, Client>::iterator it = _client_table.begin(); 
         it.live(); it++) {
         
+        // no response to keep-alive ping
+        if (it.value()._ping_lost_num == 2) {
+            // generate the inform packet to master server
+            _sa.clear();
+            _sa << "clientdisconnect|" << it.value()._mac.unparse_colon().c_str() << "|\n";
+            _payload = _sa.take_string();
+            _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
+            // send inform packet to master
+            output(0).push(_packet);
+            _client_table.erase(it); // delete client from hash table
+            click_chatter("%p{element}: client %s is not alive", 
+                                this, it.value()._mac.unparse_colon().c_str());
+            
+            continue;
+        }
+        
+        // send keep alive testing ping
+        _packet = make_ping_request(it.value()._ipaddr, it.value()._mac);
+        output(1).push(_packet);
+        it.value()._ping_lost_num++;
+        
+        // send client rate
         _sa.clear();
         r1 = it.value()._byte_up_rate.unparse_rate();
         r2 = it.value()._byte_down_rate.unparse_rate();
@@ -96,6 +121,7 @@ SdnAgent::run_timer(Timer*)
         }
     }
 
+    _count++;
     _packet->kill();
     _timer.reschedule_after_sec(_interval);
 }
@@ -103,10 +129,11 @@ SdnAgent::run_timer(Timer*)
 int
 SdnAgent::configure(Vector<String> &conf, ErrorHandler *errh)
 { 
-    _interval = 10;
+    _interval = 5;
     if (Args(conf, this, errh)
         .read_mp("MAC", _mac)
-        .read_m("IP", _ipaddr)
+        .read_m("CTRL_IP", _ipaddr)
+        .read_m("AP_IP", _ap_ipaddr)
         .read_m("INTERVAL", _interval)
         .read_mp("LEASES", ElementCastArg("DHCPLeaseTable"), _leases)
         .complete() < 0) {
@@ -123,6 +150,7 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
         Client new_client;
         new_client._mac = eth;
         new_client._ipaddr = ip;
+        new_client._ping_lost_num = 0;
 
         _client_table.set(eth, new_client);
     }
@@ -137,14 +165,15 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
 * In-port-1: wifi disassociate/deauth packets
 * In-port-2: dhcp packets
 * In-port-3: packets sent from client to agent's specific control port
-* In-port-4: other ethernet encapsulated frame to/from client
+* In-port-4: icmp echo reply from client
+* In-port-5: other ethernet encapsulated frame to/from client
 *
 * Out-port-0: management packets to master controller via a socket
 * Out-port-1: packets to clients
 * Out-port-2: other packets, let them through
 */
 
-void
+void 
 SdnAgent::push(int port, Packet *p)
 {
 
@@ -182,7 +211,7 @@ SdnAgent::push(int port, Packet *p)
             }
                 
         } else if (*data == 'a') {
-            click_chatter("%c", 'master to agent');
+            click_chatter("control packets from master to client");
         }
         
 
@@ -231,8 +260,29 @@ SdnAgent::push(int port, Packet *p)
             Packet *_packet = Packet::make(Packet::default_headroom, data, len-2, 0);
             click_chatter("%p{element}: client message to master", this);
             output(0).push(_packet);
-        }       
-    } else if (port == 4) { // statisitcs
+        }
+    } else if (port == 4) { // icmp
+
+        click_chatter("receive icmp echo reply");
+
+        const click_ether *eth = p->ether_header();
+        const click_ip *ip_header = p->ip_header();
+        const click_icmp_echo *icmp_header = reinterpret_cast<const click_icmp_echo *>(p->icmp_header());
+
+        if (p->has_network_header() && ip_header->ip_p == IP_PROTO_ICMP
+                && p->transport_length() >= (int)sizeof(click_icmp_echo)
+                && icmp_header->icmp_type == ICMP_ECHOREPLY
+                && icmp_header->icmp_identifier == ICMP_ID
+                && icmp_header->icmp_sequence == _icmp_sequence) {
+
+            EtherAddress eth_src = EtherAddress((unsigned char *)eth->ether_shost);
+            if (_client_table.find(eth_src) != _client_table.end()) {
+                Client *c = _client_table.get_pointer(eth_src);
+                (c->_ping_lost_num) = 0;
+            }
+        }
+        
+    } else if (port == 5) { // statisitcs
         // _byte_rate.update(p->length()); // overall rate
 
         // here is a bug
@@ -257,7 +307,6 @@ SdnAgent::push(int port, Packet *p)
     }
 
     p->kill();
-    return;
 }
 
 void 
@@ -486,11 +535,12 @@ SdnAgent::disconnect_responder(struct click_wifi *w)
     if (_client_table.find(src) != _client_table.end()) {
         
         // generate the inform packet for master server
-        _sa << "clientdisconnect " << src.unparse_colon().c_str() << "\n";
+        _sa << "clientdisconnect|" << src.unparse_colon().c_str() << "|\n";
         _payload = _sa.take_string();
         _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
         // send inform packet to master
         output(0).push(_packet);
+        click_chatter("%p{element}: inform disconnection to master\n", this);
 
         // remove the corresponding client
         _client_table.erase(src);
@@ -542,6 +592,55 @@ SdnAgent::push_udp_to_client(Packet *p_in, IPAddress ip_dst,
     output(port).push(s);
 }
 
+Packet *
+SdnAgent::make_ping_request(IPAddress ip_dst, EtherAddress eth_dst)
+{
+    // String data = "this is just some random stuff";
+    String data = String();
+    size_t headersize = sizeof(click_ether) + sizeof(click_ip) 
+                                + sizeof(click_icmp_echo);
+    
+    WritablePacket *p = Packet::make(headersize + data.length());
+    
+    memset(p->data(), '\0', headersize);
+    memcpy(p->data() + headersize, data.data(), data.length());
+
+    click_ip *nip = reinterpret_cast<click_ip *>(p->data());
+    nip->ip_v = 4;
+    nip->ip_hl = sizeof(click_ip) >> 2;
+    nip->ip_len = htons(p->length());
+    uint16_t ip_id = (_count % 0xFFFF) + 1; // ensure ip_id != 0
+    nip->ip_id = htons(ip_id);
+    nip->ip_p = IP_PROTO_ICMP; /* ICMP */
+    nip->ip_ttl = 200;
+    nip->ip_src = _ap_ipaddr;
+    nip->ip_dst = ip_dst;
+    nip->ip_sum = click_in_cksum((unsigned char *)nip, sizeof(click_ip));
+
+    click_icmp_echo *icp = (struct click_icmp_echo *) (nip + 1);
+    icp->icmp_type = ICMP_ECHO;
+    icp->icmp_code = 0;
+    icp->icmp_identifier = ICMP_ID;
+    icp->icmp_sequence = htons(ip_id);
+    icp->icmp_cksum = click_in_cksum((unsigned char *)icp, sizeof(click_icmp_sequenced) + data.length());
+    if (icp->icmp_sequence != _icmp_sequence) {
+        // save sequence for future checking
+        _icmp_sequence = icp->icmp_sequence;
+    }
+
+    p->set_dst_ip_anno(ip_dst);
+    p->set_ip_header(nip, sizeof(click_ip));
+    p->timestamp_anno().assign_now();
+
+    // set ethernet header
+    WritablePacket *e = p->push_mac_header(14);
+    click_ether *eth = (click_ether *)e->data();
+    memcpy(eth->ether_shost, _mac.data(), 6);
+    memcpy(eth->ether_dhost, eth_dst.data(), 6);
+    eth->ether_type = htons(ETHERTYPE_IP);
+    
+    return p;
+}
 
 
 CLICK_ENDDECLS
