@@ -9,7 +9,8 @@ leases :: LeasePool( ETH 9c:d3:6d:10:a9:b8, IP 192.168.0.1,
 // local offload agent
 sdn_agent::SdnAgent(MAC 9c:d3:6d:10:a9:b8, CTRL_IP 192.168.2.1, 
                     AP_IP 192.168.0.1, INTERVAL 5, 
-                    LEASES leases);
+                    LEASES leases,
+                    SHELL_PATH "/home/yfliu/Development/sdn/click/elements/local/agent/change_hostapd_channel.sh");
 
 // receive messages from master server on port 6777
 agent_socket::Socket(UDP, 0.0.0.0, 6777)

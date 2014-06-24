@@ -110,6 +110,9 @@ class SdnAgent : public Element {
     
     // client info
     HashTable<EtherAddress, Client> _client_table;
+
+    // for calling external shell script
+    String _cmd;
 };
 
 CLICK_ENDDECLS

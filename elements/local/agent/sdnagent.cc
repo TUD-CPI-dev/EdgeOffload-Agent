@@ -50,6 +50,8 @@ SdnAgent::~SdnAgent()
 int
 SdnAgent::initialize(ErrorHandler*)
 {
+    // _cmd = "/home/yfliu/Development/sdn/change_hostapd_channel.sh";
+
     _count = 0;
     _timer.initialize(this);
     _timer.schedule_after_sec(10);
@@ -136,6 +138,7 @@ SdnAgent::configure(Vector<String> &conf, ErrorHandler *errh)
         .read_m("AP_IP", _ap_ipaddr)
         .read_m("INTERVAL", _interval)
         .read_mp("LEASES", ElementCastArg("DHCPLeaseTable"), _leases)
+        .read_m("SHELL_PATH", _cmd)
         .complete() < 0) {
         return -1;
     }
@@ -211,20 +214,38 @@ SdnAgent::push(int port, Packet *p)
             }
                 
         } else if (*data == 'a') {
-            data++;
-            for (i = 0; i < 6; i++) {
-                d[i] = *data++;
-                // click_chatter("%02x", d[i]);
-            }
-            EtherAddress mac = EtherAddress(d);
+            ptr = ++data;
+            String type = String(ptr, 2);
+            if (type.equals("rm")) {
+                data = data + 2;
+                for (i = 0; i < 6; i++) {
+                    d[i] = *data++;
+                    // click_chatter("%02x", d[i]);
+                }
+                EtherAddress mac = EtherAddress(d);
 
-            ptr = data;
-            String type = String(ptr, 6);
-            if (type.equals("remove")) {
                 click_chatter("master cmd: remove client %s", mac.unparse_colon().c_str());
                 if (_client_table.find(mac) != _client_table.end()) {
                     _client_table.erase(mac);
                 }
+            } else if (type.equals("cn")) {
+                StringAccum sa;
+                String command;
+                String channel;
+                data = data + 2;
+                if (*data == '1') {
+                    channel = String(++data, 1);
+                } else if (*data == '2') {
+                    channel = String(++data, 2);
+                }
+
+                sa << _cmd.c_str() << " " << channel;
+                command = sa.take_string();
+                
+                click_chatter("%p{element}: receive master command to change channel", this);
+                // click_chatter("%s", command.data());
+
+                system(command.data());
             }
         }
 
@@ -273,6 +294,11 @@ SdnAgent::push(int port, Packet *p)
             Packet *_packet = Packet::make(Packet::default_headroom, data, len-2, 0);
             click_chatter("%p{element}: client message to master", this);
             output(0).push(_packet);
+        } else {
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+            double time_in_mill = (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000;
+            click_chatter("reconnection: %f\n", time_in_mill);
         }
     } else if (port == 4) { // icmp
         const click_ether *eth = p->ether_header();
