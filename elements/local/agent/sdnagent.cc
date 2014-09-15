@@ -17,9 +17,10 @@
 * legally binding.
 */
 
+#include <stdlib.h>
+#include <sys/time.h>
 
 #include <click/config.h>
-#include "sdnagent.hh"
 #include <click/glue.hh>
 #include <click/error.hh>
 #include <click/args.hh>
@@ -31,6 +32,7 @@
 #include <clicknet/wifi.h>
 #include <click/atomic.hh>
 
+#include "sdnagent.hh"
 #include "dhcp/dhcp_common.hh"
 #include "dhcp/dhcpoptionutil.hh"
 
@@ -228,6 +230,30 @@ SdnAgent::push(int port, Packet *p)
                 if (_client_table.find(mac) != _client_table.end()) {
                     _client_table.erase(mac);
                 }
+            } else if (type.equals("ck")) { // check whether client exits
+                uint32_t headroom =  Packet::default_headroom;
+                Packet *_packet;
+                StringAccum _data;
+                String _payload;
+                
+                data = data + 2;
+                for (i = 0; i < 6; i++) {
+                    d[i] = *data++;
+                    // click_chatter("%02x", d[i]);
+                }
+                EtherAddress mac = EtherAddress(d);
+
+                click_chatter("master cmd: checking client %s", mac.unparse_colon().c_str());
+                if (_client_table.find(mac) != _client_table.end()) {
+                    // generate the inform packet for master server
+                    Client *c = _client_table.get_pointer(mac);
+                    _data << "client|" << mac.unparse_colon().c_str() << "|" << 
+                        c->_ipaddr.unparse().c_str() << "\n";
+                    _payload = _data.take_string();
+                    _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
+                    output(0).push(_packet);
+                }
+
             } else if (type.equals("cn")) {
                 StringAccum sa;
                 String command;

@@ -7,7 +7,7 @@ leases :: LeasePool( ETH 9c:d3:6d:10:a9:b8, IP 192.168.0.1,
                     START 192.168.0.100, END 192.168.0.254 );
 
 // local offload agent
-sdn_agent::SdnAgent(MAC 9c:d3:6d:10:a9:b8, CTRL_IP 192.168.2.1, 
+sdn_agent::SdnAgent(MAC 9c:d3:6d:10:a9:b8, CTRL_IP 192.168.3.30, 
                     AP_IP 192.168.0.1, INTERVAL 5, 
                     LEASES leases,
                     SHELL_PATH "/home/yfliu/Development/sdn/click/elements/local/agent/change_hostapd_channel.sh");
@@ -17,7 +17,7 @@ agent_socket::Socket(UDP, 0.0.0.0, 6777)
     -> [0]sdn_agent;
 
 // send packets to master server
-sdn_agent[0] -> master_socket::Socket(UDP, 192.168.2.3, 26284);
+sdn_agent[0] -> master_socket::Socket(UDP, 192.168.3.62, 26284);
 
 // send packets from agent to client
 sdn_agent[1]
