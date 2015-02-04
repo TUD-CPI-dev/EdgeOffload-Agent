@@ -48,7 +48,7 @@ Acts as an agent for the sdn controller
 to be added...
 */
 
-typedef RateEWMAX<RateEWMAXParameters<4, 4> > byte_rate_t;
+typedef RateEWMAX<RateEWMAXParameters<10, 4> > byte_rate_t;
 
 class SdnAgent : public Element {
   public:

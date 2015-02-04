@@ -76,8 +76,8 @@ SdnAgent::run_timer(Timer*)
     }
 
     // send agent rate messages to master controller
-    r1 = _byte_up_rate.unparse_rate();
-    r2 = _byte_down_rate.unparse_rate();
+    r1 = String(_byte_up_rate.scaled_average());
+    r2 = String(_byte_down_rate.scaled_average());
     if (r1 != "" && r2 != "") {
         _sa << "agentrate|" << r1 << "|" << r2 << "|\n";
         _payload = _sa.take_string();
@@ -112,8 +112,13 @@ SdnAgent::run_timer(Timer*)
         
         // send client rate
         _sa.clear();
-        r1 = it.value()._byte_up_rate.unparse_rate();
-        r2 = it.value()._byte_down_rate.unparse_rate();
+        r1 = String(it.value()._byte_up_rate.scaled_average());
+        r2 = String(it.value()._byte_down_rate.scaled_average());
+
+        // debug
+        // click_chatter("%d, %d", it.value()._byte_down_rate.scaled_average(), it.value()._byte_down_rate.rate());
+
+
         if (r1 != "" && r2 != "") {
             _sa << "clientrate|" << it.value()._mac.unparse_colon().c_str() <<
                 "|" << it.value()._ipaddr.unparse().c_str() << "|" << r1 << 
