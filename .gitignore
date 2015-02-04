@@ -19,3 +19,7 @@ installch
 man
 stamp-egroup
 stamp-h
+.project
+.cproject
+nbproject
+
