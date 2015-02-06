@@ -17,9 +17,10 @@
 * legally binding.
 */
 
+#include <stdlib.h>
+#include <sys/time.h>
 
 #include <click/config.h>
-#include "sdnagent.hh"
 #include <click/glue.hh>
 #include <click/error.hh>
 #include <click/args.hh>
@@ -31,6 +32,7 @@
 #include <clicknet/wifi.h>
 #include <click/atomic.hh>
 
+#include "sdnagent.hh"
 #include "dhcp/dhcp_common.hh"
 #include "dhcp/dhcpoptionutil.hh"
 
@@ -74,8 +76,8 @@ SdnAgent::run_timer(Timer*)
     }
 
     // send agent rate messages to master controller
-    r1 = _byte_up_rate.unparse_rate();
-    r2 = _byte_down_rate.unparse_rate();
+    r1 = String(_byte_up_rate.scaled_average());
+    r2 = String(_byte_down_rate.scaled_average());
     if (r1 != "" && r2 != "") {
         _sa << "agentrate|" << r1 << "|" << r2 << "|\n";
         _payload = _sa.take_string();
@@ -110,8 +112,13 @@ SdnAgent::run_timer(Timer*)
         
         // send client rate
         _sa.clear();
-        r1 = it.value()._byte_up_rate.unparse_rate();
-        r2 = it.value()._byte_down_rate.unparse_rate();
+        r1 = String(it.value()._byte_up_rate.scaled_average());
+        r2 = String(it.value()._byte_down_rate.scaled_average());
+
+        // debug
+        // click_chatter("%d, %d", it.value()._byte_down_rate.scaled_average(), it.value()._byte_down_rate.rate());
+
+
         if (r1 != "" && r2 != "") {
             _sa << "clientrate|" << it.value()._mac.unparse_colon().c_str() <<
                 "|" << it.value()._ipaddr.unparse().c_str() << "|" << r1 << 
@@ -228,6 +235,30 @@ SdnAgent::push(int port, Packet *p)
                 if (_client_table.find(mac) != _client_table.end()) {
                     _client_table.erase(mac);
                 }
+            } else if (type.equals("ck")) { // check whether client exits
+                uint32_t headroom =  Packet::default_headroom;
+                Packet *_packet;
+                StringAccum _data;
+                String _payload;
+                
+                data = data + 2;
+                for (i = 0; i < 6; i++) {
+                    d[i] = *data++;
+                    // click_chatter("%02x", d[i]);
+                }
+                EtherAddress mac = EtherAddress(d);
+
+                click_chatter("master cmd: checking client %s", mac.unparse_colon().c_str());
+                if (_client_table.find(mac) != _client_table.end()) {
+                    // generate the inform packet for master server
+                    Client *c = _client_table.get_pointer(mac);
+                    _data << "client|" << mac.unparse_colon().c_str() << "|" << 
+                        c->_ipaddr.unparse().c_str() << "\n";
+                    _payload = _data.take_string();
+                    _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
+                    output(0).push(_packet);
+                }
+
             } else if (type.equals("cn")) {
                 StringAccum sa;
                 String command;
