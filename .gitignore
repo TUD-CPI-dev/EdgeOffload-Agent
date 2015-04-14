@@ -3,6 +3,7 @@
 .*.cmd
 configure
 Makefile
+*.ko
 autom4te*
 bin
 click-buildtool
@@ -19,3 +20,4 @@ installch
 man
 stamp-egroup
 stamp-h
+nbproject/
