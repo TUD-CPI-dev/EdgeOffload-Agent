@@ -266,13 +266,52 @@ click_dentry_revalidate_nd(struct dentry *dentry, struct nameidata *nd)
 #endif
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+static bool
+my_filldir(const char *name, int namelen, ino_t ino, int dirtype, loff_t f_pos, void *thunk)
+{
+    struct dir_context* ctx = (struct dir_context*) thunk;
+    return dir_emit(ctx, name, namelen, ino, dirtype);
+}
+
+static int
+click_dir_iterate(struct file *filp, struct dir_context* ctx)
+{
+    struct inode *inode = filp->f_dentry->d_inode;
+    ino_t ino = inode->i_ino;
+    MDEBUG("click_dir_readdir %lx", ino);
+
+    LOCK_CONFIG();
+
+    int error = click_ino_check(inode, -ENOENT);
+    int stored = 0;
+    if (error < 0)
+	goto done;
+
+    // global '..'
+    if (ino == ClickIno::ino_globaldir && ctx->pos == 0) {
+	if (!my_filldir("..", 2, parent_ino(filp->f_dentry), ctx->pos, DT_DIR, ctx))
+	    goto done;
+        ctx->pos = 1;
+	stored++;
+    }
+
+    // real entries
+    stored += click_ino.readdir(ino, ctx->pos, my_filldir, ctx);
+
+  done:
+    UNLOCK_CONFIG();
+    return (error ? error : stored);
+}
+
+#else
 struct my_filldir_container {
     filldir_t filldir;
     void *dirent;
 };
 
 static bool
-my_filldir(const char *name, int namelen, ino_t ino, int dirtype, uint32_t f_pos, void *thunk)
+my_filldir(const char *name, int namelen, ino_t ino, int dirtype, loff_t f_pos, void *thunk)
 {
     my_filldir_container *mfd = (my_filldir_container *)thunk;
     int error = mfd->filldir(mfd->dirent, name, namelen, f_pos, ino, dirtype);
@@ -288,7 +327,7 @@ click_dir_readdir(struct file *filp, void *dirent, filldir_t filldir)
 
     struct inode *inode = filp->f_dentry->d_inode;
     ino_t ino = inode->i_ino;
-    uint32_t f_pos = filp->f_pos;
+    loff_t f_pos = filp->f_pos;
     MDEBUG("click_dir_readdir %lx", ino);
 
     LOCK_CONFIG();
@@ -314,6 +353,7 @@ click_dir_readdir(struct file *filp, void *dirent, filldir_t filldir)
     filp->f_pos = f_pos;
     return (error ? error : stored);
 }
+#endif
 
 } // extern "C"
 
@@ -910,7 +950,8 @@ do_handler_ioctl(struct inode *inode, struct file *filp,
                || !(e = click_router->element(click_ino.ino_element(inode->i_ino))))
 	retval = -EIO;
     else {
-        if (command & _CLICK_IOC_SAFE)
+        bool ioc_safe = (command & _CLICK_IOC_SAFE);
+        if (ioc_safe)
             locktype = DOWNGRADE_CONFIG_LOCK(e->router());
 
 	union {
@@ -935,6 +976,9 @@ do_handler_ioctl(struct inode *inode, struct file *filp,
 	    && (retval = CLICK_LLRPC_GET_DATA(data, address_ptr, size)) < 0)
 	    goto free_exit;
 
+        if (!ioc_safe)
+            lock_threads();
+
 	// call llrpc
         if (size && (command & (_CLICK_IOC_IN | _CLICK_IOC_OUT)))
             arg_ptr = data;
@@ -945,6 +989,9 @@ do_handler_ioctl(struct inode *inode, struct file *filp,
 	    retval = e->llrpc(command, arg_ptr);
 	else
 	    retval = e->Element::llrpc(command, arg_ptr);
+
+        if (!ioc_safe)
+            unlock_threads();
 
 	// store outgoing data if necessary
 	if (retval >= 0 && size && (command & _CLICK_IOC_OUT))
@@ -990,12 +1037,12 @@ read_ino_info(Element *, void *)
 /*********************** Initialization and termination **********************/
 
 struct file_operations *
-click_new_file_operations()
+click_new_file_operations(const char* name)
 {
     if (!clickfs)
 	clickfs = proclikefs_register_filesystem("click", 0, click_get_sb);
     if (clickfs)
-	return proclikefs_new_file_operations(clickfs);
+	return proclikefs_new_file_operations(clickfs, name);
     else
 	return 0;
 }
@@ -1003,17 +1050,17 @@ click_new_file_operations()
 int
 init_clickfs()
 {
-    static_assert(HANDLER_DIRECT + HANDLER_WRITE_UNLIMITED < Handler::USER_FLAG_0, "Too few driver handler flags available.");
+    static_assert(HANDLER_DIRECT + HANDLER_WRITE_UNLIMITED < Handler::f_user0, "Too few driver handler flags available.");
     static_assert(((HS_DIRECT | HS_WRITE_UNLIMITED) & (HS_READING | HS_DONE | HS_RAW)) == 0, "Handler flag overlap.");
 
     mutex_init(&handler_strings_lock);
     mutex_init(&clickfs_lock);
 
     // clickfs creation moved to click_new_file_operations()
-    if (!(click_dir_file_ops = click_new_file_operations())
-	|| !(click_dir_inode_ops = proclikefs_new_inode_operations(clickfs))
-	|| !(click_handler_file_ops = click_new_file_operations())
-	|| !(click_handler_inode_ops = proclikefs_new_inode_operations(clickfs))) {
+    if (!(click_dir_file_ops = click_new_file_operations("dirf"))
+	|| !(click_dir_inode_ops = proclikefs_new_inode_operations(clickfs, "diri"))
+	|| !(click_handler_file_ops = click_new_file_operations("hf"))
+	|| !(click_handler_inode_ops = proclikefs_new_inode_operations(clickfs, "hi"))) {
 	printk(KERN_ALERT "click: could not initialize clickfs!\n");
 	return -EINVAL;
     }
@@ -1029,7 +1076,11 @@ init_clickfs()
 #endif
 
     click_dir_file_ops->read = generic_read_dir;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+    click_dir_file_ops->iterate = click_dir_iterate;
+#else
     click_dir_file_ops->readdir = click_dir_readdir;
+#endif
     click_dir_inode_ops->lookup = click_dir_lookup;
 
     click_handler_file_ops->llseek = handler_llseek;

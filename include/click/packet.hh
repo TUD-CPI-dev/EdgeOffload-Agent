@@ -15,7 +15,7 @@
 #if CLICK_NS
 # include <click/simclick.h>
 #endif
-#if (CLICK_USERLEVEL || CLICK_NS) && (!HAVE_MULTITHREAD || HAVE___THREAD_STORAGE_CLASS)
+#if (CLICK_USERLEVEL || CLICK_NS || CLICK_MINIOS) && (!HAVE_MULTITHREAD || HAVE___THREAD_STORAGE_CLASS)
 # define HAVE_CLICK_PACKET_POOL 1
 #endif
 #ifndef CLICK_PACKET_DEPRECATED_ENUM
@@ -39,8 +39,12 @@ class Packet { public:
     // PACKET CREATION
 
     enum {
+#ifdef CLICK_MINIOS
+	default_headroom = 48,		///< Increase headroom for improved performance.
+#else
 	default_headroom = 28,		///< Default packet headroom() for
 					///  Packet::make().  4-byte aligned.
+#endif
 	min_buffer_length = 64		///< Minimum buffer_length() for
 					///  Packet::make()
     };
@@ -57,10 +61,11 @@ class Packet { public:
     // Packet now owns the mbuf.
     static inline Packet *make(struct mbuf *mbuf) CLICK_WARN_UNUSED_RESULT;
 #endif
-#if CLICK_USERLEVEL
-    typedef void (*buffer_destructor_type)(unsigned char *buf, size_t sz);
-    static WritablePacket *make(unsigned char *data, uint32_t length,
-				buffer_destructor_type buffer_destructor) CLICK_WARN_UNUSED_RESULT;
+#if CLICK_USERLEVEL || CLICK_MINIOS
+    typedef void (*buffer_destructor_type)(unsigned char* buf, size_t sz, void* argument);
+    static WritablePacket* make(unsigned char* data, uint32_t length,
+				buffer_destructor_type buffer_destructor,
+                                void* argument = (void*) 0) CLICK_WARN_UNUSED_RESULT;
 #endif
 
     static void static_cleanup();
@@ -88,7 +93,7 @@ class Packet { public:
     const struct mbuf *m() const	{ return (const struct mbuf *)_m; }
     struct mbuf *steal_m();
     struct mbuf *dup_jumbo_m(struct mbuf *mbuf);
-#elif CLICK_USERLEVEL
+#elif CLICK_USERLEVEL || CLICK_MINIOS
     buffer_destructor_type buffer_destructor() const {
 	return _destructor;
     }
@@ -253,7 +258,7 @@ class Packet { public:
      * @post new data() == old data() + @a offset (if no copy is made)
      * @post new buffer() == old buffer() (if no copy is made) */
     Packet *shift_data(int offset, bool free_on_failure = true) CLICK_WARN_UNUSED_RESULT;
-#if CLICK_USERLEVEL
+#if CLICK_USERLEVEL || CLICK_MINIOS
     inline void shrink_data(const unsigned char *data, uint32_t length);
     inline void change_headroom_and_length(uint32_t headroom, uint32_t length);
 #endif
@@ -304,6 +309,15 @@ class Packet { public:
     inline const click_tcp *tcp_header() const;
     inline const click_udp *udp_header() const;
     //@}
+
+#if CLICK_LINUXMODULE
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && NET_SKBUFF_DATA_USES_OFFSET
+  protected:
+    typedef typeof(((struct sk_buff*)0)->mac_header) mac_header_type;
+    typedef typeof(((struct sk_buff*)0)->network_header) network_header_type;
+    typedef typeof(((struct sk_buff*)0)->transport_header) transport_header_type;
+# endif
+#endif
 
   private:
     /** @cond never */
@@ -713,15 +727,16 @@ class Packet { public:
     unsigned char *_data; /* where the packet starts */
     unsigned char *_tail; /* one beyond end of packet */
     unsigned char *_end;  /* one beyond end of allocated buffer */
-# if CLICK_USERLEVEL
-    buffer_destructor_type _destructor;
-# endif
 # if CLICK_BSDMODULE
     struct mbuf *_m;
 # endif
     AllAnno _aa;
 # if CLICK_NS
     SimPacketinfoWrapper _sim_packetinfo;
+# endif
+# if CLICK_USERLEVEL || CLICK_MINIOS
+    buffer_destructor_type _destructor;
+    void* _destructor_argument;
 # endif
 #endif
 
@@ -851,7 +866,7 @@ WritablePacket::initialize()
 {
     _use_count = 1;
     _data_packet = 0;
-# if CLICK_USERLEVEL
+# if CLICK_USERLEVEL || CLICK_MINIOS
     _destructor = 0;
 # elif CLICK_BSDMODULE
     _m = 0;
@@ -1067,7 +1082,7 @@ Packet::has_network_header() const
 #if CLICK_LINUXMODULE
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
 #  if NET_SKBUFF_DATA_USES_OFFSET
-    return skb()->network_header != ~0U;
+    return skb()->network_header != (network_header_type) ~0U;
 #  else
     return skb()->network_header != 0;
 #  endif
@@ -1105,7 +1120,7 @@ Packet::has_transport_header() const
 #if CLICK_LINUXMODULE
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
 #  if NET_SKBUFF_DATA_USES_OFFSET
-    return skb()->transport_header != ~0U;
+    return skb()->transport_header != (transport_header_type) ~0U;
 #  else
     return skb()->transport_header != 0;
 #  endif
@@ -1650,7 +1665,7 @@ Packet::take(uint32_t len)
 #endif
 }
 
-#if CLICK_USERLEVEL
+#if CLICK_USERLEVEL || CLICK_MINIOS
 /** @brief Shrink the packet's data.
  * @param data new data pointer
  * @param length new length
@@ -1784,7 +1799,7 @@ Packet::clear_mac_header()
 {
 #if CLICK_LINUXMODULE	/* Linux kernel module */
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && NET_SKBUFF_DATA_USES_OFFSET
-    skb()->mac_header = ~0U;
+    skb()->mac_header = (mac_header_type) ~0U;
 # elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
     skb()->mac_header = 0;
 # else
@@ -1905,7 +1920,7 @@ Packet::clear_network_header()
 {
 #if CLICK_LINUXMODULE	/* Linux kernel module */
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && NET_SKBUFF_DATA_USES_OFFSET
-    skb()->network_header = ~0U;
+    skb()->network_header = (network_header_type) ~0U;
 # elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
     skb()->network_header = 0;
 # else
@@ -2021,7 +2036,7 @@ Packet::clear_transport_header()
 {
 #if CLICK_LINUXMODULE	/* Linux kernel module */
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && NET_SKBUFF_DATA_USES_OFFSET
-    skb()->transport_header = ~0U;
+    skb()->transport_header = (transport_header_type) ~0U;
 # elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
     skb()->transport_header = 0;
 # else
@@ -2040,9 +2055,9 @@ Packet::shift_header_annotations(const unsigned char *old_head,
     struct sk_buff *mskb = skb();
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && NET_SKBUFF_DATA_USES_OFFSET
     (void) old_head;
-    mskb->mac_header += (mskb->mac_header == ~0U ? 0 : extra_headroom);
-    mskb->network_header += (mskb->network_header == ~0U ? 0 : extra_headroom);
-    mskb->transport_header += (mskb->transport_header == ~0U ? 0 : extra_headroom);
+    mskb->mac_header += (mskb->mac_header == (mac_header_type) ~0U ? 0 : extra_headroom);
+    mskb->network_header += (mskb->network_header == (network_header_type) ~0U ? 0 : extra_headroom);
+    mskb->transport_header += (mskb->transport_header == (transport_header_type) ~0U ? 0 : extra_headroom);
 # elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
     ptrdiff_t shift = (mskb->head - old_head) + extra_headroom;
     mskb->mac_header += (mskb->mac_header ? shift : 0);

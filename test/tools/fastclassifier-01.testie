@@ -35,3 +35,5 @@ B: 4{{.*}}
 
 %ignore
 expensive{{.*}}
+make{{.*jobserver.*}}
+g++{{.*}}: warning{{.*}}
