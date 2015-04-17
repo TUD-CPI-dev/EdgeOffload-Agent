@@ -3,8 +3,6 @@
  * based on the original dhcpserverack.{cc,hh} written Lih Chen
  *
  * Yanhe Liu <yanhe.liu@cs.helsinki.fi>
- * Aaron Yi DING <yding@cs.helsinki.fi>
- * Sasu Tarkoma <sasu.tarkoma@cs.helsinki.fi>
  *
  * Copyright (c) 2013 University of Helsinki
  *

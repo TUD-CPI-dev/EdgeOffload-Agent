@@ -3,6 +3,7 @@
  * Lih Chen
  * Yanhe Liu -- small modifications in 2013
  *
+ * Copyright (c) 2013 University of Helsinki
  * Copyright (c) 2004 Regents of the University of California
  *
  * Permission is hereby granted, free of charge, to any person obtaining a

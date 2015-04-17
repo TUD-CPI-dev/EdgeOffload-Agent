@@ -1,8 +1,6 @@
 /*
 * sdnagent.{cc,hh} -- An agent for the wireless sdn system
 * Yanhe Liu <yanhe.liu@cs.helsinki.fi>
-* Aaron Yi DING <yding@cs.helsinki.fi>
-* Sasu Tarkoma <sasu.tarkoma@cs.helsinki.fi>
 *
 * Copyright (c) 2013 University of Helsinki
 *

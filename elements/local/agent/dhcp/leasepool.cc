@@ -3,6 +3,7 @@
  * John Bicket
  * Yanhe Liu -- add dns option
  *
+ * Copyright (c) 2013 University of Helsinki
  * Copyright (c) 2005 Massachusetts Institute of Technology
  *
  * Permission is hereby granted, free of charge, to any person obtaining a

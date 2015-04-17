@@ -1,7 +1,7 @@
 
 // control::ControlSocket("TCP", 6777);
 
-// dhcp ip lease pool
+// dhcp ip lease pool for this AP
 leases :: LeasePool( ETH 9c:d3:6d:10:a9:b8, IP 192.168.0.1, 
                     MASK 255.255.255.0, DNS 8.8.8.8, 
                     START 192.168.0.100, END 192.168.0.254 );
