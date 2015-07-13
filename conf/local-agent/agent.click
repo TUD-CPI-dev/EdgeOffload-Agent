@@ -17,7 +17,7 @@ agent_socket::Socket(UDP, 0.0.0.0, 6777)
     -> [0]sdn_agent;
 
 // send packets to master server
-sdn_agent[0] -> master_socket::Socket(UDP, 192.168.3.62, 26284);
+sdn_agent[0] -> master_socket::Socket(UDP, 192.168.3.10, 26284);
 
 // send packets from agent to client
 sdn_agent[1]
@@ -63,7 +63,6 @@ FromDevice(wlan1, OUTBOUND true)
 
 ip_class[0]
     -> [4]sdn_agent; 
-    // -> [1]server_offer::DHCPServerOffer(leases);
 
 // dhcp packets
 ip_class[1]

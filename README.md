@@ -21,7 +21,7 @@ Our agent logic is implemented mainly by using a custom Click element called [sd
 
 Change agent configuration [agent.click](https://github.com/TKTL-SDN/SoftOffload-Agent/tree/eit-sdn/conf/local-agent) for your system.
 
-We provide a script to help you generate suitable config file quickly for your system.
+We provide a [script](https://github.com/TKTL-SDN/SoftOffload-Agent/tree/eit-sdn/conf/local-agent/agent-config-generator.py) to help you generate suitable config file quickly for your system.
 
 ```
 $ cd SoftOffload-Agent/conf/local-agent/

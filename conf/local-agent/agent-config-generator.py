@@ -1,6 +1,5 @@
 #!/usr/bin/python
 import argparse
-import sys
 
 # parse arguments with argparse package
 parser = argparse.ArgumentParser(description='description: '
