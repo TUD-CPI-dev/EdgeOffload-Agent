@@ -2,7 +2,7 @@
 * sdnagent.{cc,hh} -- An agent for the wireless sdn system
 * Yanhe Liu <yanhe.liu@cs.helsinki.fi>
 *
-* Copyright (c) 2013 University of Helsinki
+* Copyright (c) 2015 University of Helsinki
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -36,6 +36,7 @@
 
 #define MESSAGE_END '\n'
 #define ICMP_ID 1
+#define MAX_PING_LOST_NUM 5
 
 CLICK_DECLS
 
@@ -58,15 +59,25 @@ SdnAgent::initialize(ErrorHandler*)
     return 0;
 }
 
+/********** important change 10.07.2015 *************
+*
+* 1) rate statistics is not performed on click agent anymore
+* due to inherent measurement errors of click
+* 2) now this timer is only used to perform keep-alive pings
+*
+*****************************************************/
+
 void
 SdnAgent::run_timer(Timer*)
 {
-    uint32_t headroom =  Packet::default_headroom;
+    uint32_t headroom = Packet::default_headroom;
     Packet *_packet;
+    Packet *_ping_packet;
     StringAccum _sa;
     String _payload;
-    String r1, r2;
+    // String r1, r2;
 
+    /*
     // clear old agent rates if there is no client
     if (_client_table.empty()) {
         _byte_up_rate.update(0);
@@ -81,14 +92,14 @@ SdnAgent::run_timer(Timer*)
         _payload = _sa.take_string();
         _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
         output(0).push(_packet);
-    }
-
+    } */
+    
     // logic for client
     for (HashTable<EtherAddress, Client>::iterator it = _client_table.begin(); 
         it.live(); it++) {
         
         // no response to keep-alive ping
-        if (it.value()._ping_lost_num == 2) {
+        if (it.value()._ping_lost_num == MAX_PING_LOST_NUM) {
             // generate the inform packet to master server
             _sa.clear();
             _sa << "clientdisconnect|" << it.value()._mac.unparse_colon().c_str() << "|\n";
@@ -104,14 +115,20 @@ SdnAgent::run_timer(Timer*)
         }
         
         // send keep alive testing ping
-        _packet = make_ping_request(it.value()._ipaddr, it.value()._mac);
-        output(1).push(_packet);
+        _ping_packet = make_ping_request(it.value()._ipaddr, it.value()._mac);
+        // click_chatter("ping packet len: %d\n", _packet->length());
+        output(1).push(_ping_packet);
         it.value()._ping_lost_num++;
         
+        /*
         // send client rate
         _sa.clear();
-        r1 = String(it.value()._byte_up_rate.scaled_average());
-        r2 = String(it.value()._byte_down_rate.scaled_average());
+        r1 = String((float)it.value()._byte_up_count / _interval);
+        it.value()._byte_up_count = 0;
+        r2 = String((float)it.value()._byte_down_count / _interval);
+        it.value()._byte_down_count = 0;
+        // r1 = String(it.value()._byte_up_rate.scaled_average());
+        // r2 = String(it.value()._byte_down_rate.scaled_average());
 
         // debug
         // click_chatter("%d, %d", it.value()._byte_down_rate.scaled_average(), it.value()._byte_down_rate.rate());
@@ -126,10 +143,12 @@ SdnAgent::run_timer(Timer*)
                                     _payload.length(), 0);
             output(0).push(_packet);
         }
+        */
     }
 
     _count++;
-    _packet->kill();
+    // _packet->kill();
+    // _ping_packet->kill();
     _timer.reschedule_after_sec(_interval);
 }
 
@@ -159,6 +178,8 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
         new_client._mac = eth;
         new_client._ipaddr = ip;
         new_client._ping_lost_num = 0;
+        // new_client._byte_up_count = 0;
+        // new_client._byte_down_count = 0;
 
         _client_table.set(eth, new_client);
     }
@@ -168,7 +189,7 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
 
 /** 
 * This element has 3 input ports and 3 output ports.
-*
+*cket:
 * In-port-0: ip encapsulated packets from master controller
 * In-port-1: wifi disassociate/deauth packets
 * In-port-2: dhcp packets
@@ -179,6 +200,10 @@ SdnAgent::add_client(EtherAddress eth, IPAddress ip)
 * Out-port-0: management packets to master controller via a socket
 * Out-port-1: packets to clients
 * Out-port-2: other packets, let them through
+* 
+* Important changes 10.07.2015
+* No action is performed for In-port-5 due to packet monitoring
+* limitation of click
 */
 
 void 
@@ -347,7 +372,8 @@ SdnAgent::push(int port, Packet *p)
             }
         }
         
-    } else if (port == 5) { // statisitcs
+    } else if (port == 5) { // statisitcs, not used anymore
+        /*
         // _byte_rate.update(p->length()); // overall rate
 
         // here is a bug
@@ -360,14 +386,20 @@ SdnAgent::push(int port, Packet *p)
 
         if (_client_table.find(eth_src) != _client_table.end()) {
             Client *c = _client_table.get_pointer(eth_src);
-            c->_byte_up_rate.update(p->length());
+            // c->_byte_up_rate.update(p->length());
+            c->_byte_up_count += (long)p->length();
             _byte_up_rate.update(p->length());
+            click_chatter("up packet len: %d\n", p->length());
         } else if (_client_table.find(eth_dst) != _client_table.end()) {
             Client *c = _client_table.get_pointer(eth_dst);
-            c->_byte_down_rate.update(p->length());
+            // c->_byte_down_rate.update(p->length());
+            c->_byte_down_count += (long)p->length();
             _byte_down_rate.update(p->length());
+            click_chatter("down packet length: %d\n", p->length());
         }
+        */
 
+        // do nothing
         output(2).push(p); 
     }
 

@@ -71,9 +71,11 @@ class SdnAgent : public Element {
         
         int _ping_lost_num;
     
-        // rate
-        byte_rate_t _byte_up_rate;   // client rate
-        byte_rate_t _byte_down_rate;
+        // rate not used anymore
+        // float _byte_up_rate;   // client rate
+        // float _byte_down_rate;
+        // long _byte_up_count;
+        // long _byte_down_count;
     };
 
     void add_client(EtherAddress eth, IPAddress ip);
@@ -87,8 +89,8 @@ class SdnAgent : public Element {
     int _interval;
     uint32_t _count;         // ping keep alive packet count
     uint16_t _icmp_sequence;
-    byte_rate_t _byte_up_rate;   // agent overall rate
-    byte_rate_t _byte_down_rate;
+    // byte_rate_t _byte_up_rate;   // agent overall rate
+    // byte_rate_t _byte_down_rate;
 
     // dhcp
     void send_dhcp_ack_or_nak(int port, Packet *p);
@@ -115,5 +117,3 @@ class SdnAgent : public Element {
 
 CLICK_ENDDECLS
 #endif
-
-
