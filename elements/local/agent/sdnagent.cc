@@ -300,6 +300,24 @@ SdnAgent::push(int port, Packet *p)
                 // click_chatter("%s", command.data());
 
                 system(command.data());
+            } else if (type.equals("rp")) { // report all client info
+                uint32_t headroom =  Packet::default_headroom;
+                Packet *_packet;
+                StringAccum _data;
+                String _payload;
+
+                click_chatter("master cmd: report all clients\n");
+                for (HashTable<EtherAddress, Client>::iterator it 
+                        = _client_table.begin(); it.live(); it++) {
+                    it.value()._mac;
+                    _data << "client|" 
+                        << it.value()._mac.unparse_colon().c_str() << "|" 
+                        << it.value()._ipaddr.unparse().c_str() << "\n";
+                    _payload = _data.take_string();
+                    _packet = Packet::make(headroom, _payload.data(), _payload.length(), 0);
+                    output(0).push(_packet);
+                    _data.clear();
+                }
             }
         }
 
